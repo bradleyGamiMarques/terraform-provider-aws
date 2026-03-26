@@ -44,7 +44,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/directoryservice"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/directoryservice/types"
-	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -536,62 +535,15 @@ func findDirectorySettingsByID(ctx context.Context, conn *ds.Client, id string) 
 	return out.DirectorySettings, nil
 }
 
-// TIP: ==== DATA STRUCTURES ====
-// With Terraform Plugin-Framework configurations are deserialized into
-// Go types, providing type safety without the need for type assertions.
-// These structs should match the schema definition exactly, and the `tfsdk`
-// tag value should match the attribute name.
-//
-// Nested objects are represented in their own data struct. These will
-// also have a corresponding attribute type mapping for use inside flex
-// functions.
-//
-// See more:
-// https://developer.hashicorp.com/terraform/plugin/framework/handling-data/accessing-values
 type directorySettingsResourceModel struct {
 	framework.WithRegionModel
-	ARN             types.String                                          `tfsdk:"arn"`
-	ComplexArgument fwtypes.ListNestedObjectValueOf[complexArgumentModel] `tfsdk:"complex_argument"`
-	Description     types.String                                          `tfsdk:"description"`
-	ID              types.String                                          `tfsdk:"id"`
-	Name            types.String                                          `tfsdk:"name"`
-	Timeouts        timeouts.Value                                        `tfsdk:"timeouts"`
-	Type            types.String                                          `tfsdk:"type"`
+	DirectoryID types.String                                            `tfsdk:"directory_id"`
+	Settings    fwtypes.ListNestedObjectValueOf[directorySettingsModel] `tfsdk:"settings"`
 }
 
-type complexArgumentModel struct {
-	NestedRequired types.String `tfsdk:"nested_required"`
-	NestedOptional types.String `tfsdk:"nested_optional"`
-}
-
-// TIP: ==== IMPORT ID HANDLER ====
-// When a resource type has a Resource Identity with multiple attributes, it needs a handler to
-// parse the Import ID used for the `terraform import` command or an `import` block with the `id` parameter.
-//
-// The parser takes the string value of the Import ID and returns:
-// * A string value that is typically ignored. See documentation for more details.
-// * A map of the resource attributes derived from the Import ID.
-// * An error value if there are parsing errors.
-//
-// For more information, see https://hashicorp.github.io/terraform-provider-aws/resource-identity/#plugin-framework
-var (
-	_ inttypes.ImportIDParser = directorySettingsImportID{}
-)
-
-type directorySettingsImportID struct{}
-
-func (directorySettingsImportID) Parse(id string) (string, map[string]string, error) {
-	someValue, anotherValue, found := strings.Cut(id, intflex.ResourceIdSeparator)
-	if !found {
-		return "", nil, fmt.Errorf("id \"%s\" should be in the format <some-value>"+intflex.ResourceIdSeparator+"<another-value>", id)
-	}
-
-	result := map[string]string{
-		"some-value":    someValue,
-		"another-value": anotherValue,
-	}
-
-	return id, result, nil
+type directorySettingsModel struct {
+	Name  types.String `tfsdk:"name"`
+	Value types.String `tfsdk:"value"`
 }
 
 // TIP: ==== SWEEPERS ====
