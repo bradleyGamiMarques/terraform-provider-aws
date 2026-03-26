@@ -37,6 +37,7 @@ import (
 	// awstypes.<Type Name>.
 	"context"
 	"errors"
+	"regexp"
 	"time"
 
 	"github.com/YakDriver/smarterr"
@@ -44,12 +45,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/directoryservice"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/directoryservice/types"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
-	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-provider-aws/internal/conns"
@@ -65,12 +64,11 @@ import (
 	"github.com/hashicorp/terraform-provider-aws/internal/tfresource"
 	"github.com/hashicorp/terraform-provider-aws/names"
 )
+
 // TIP: ==== FILE STRUCTURE ====
 // All resources should follow this basic outline. Improve this resource's
 // maintainability by sticking to it.
 //
-// 1. Package declaration
-// 2. Imports
 // 3. Main resource struct with schema method
 // 4. Create, read, update, delete methods (in that order)
 // 5. Other functions (flatteners, expanders, waiters, finders, etc.)
@@ -78,31 +76,7 @@ import (
 // Function annotations are used for resource registration to the Provider. DO NOT EDIT.
 // @FrameworkResource("aws_ds_directory_settings", name="Directory Settings")
 
-// TIP: ==== RESOURCE IDENTITY ====
-// Identify which attributes can be used to uniquely identify the resource.
-// 
-// * If the AWS APIs for the resource take the ARN as an identifier, use
-// ARN Identity.
-// * If the resource is a singleton (i.e., there is only one instance per region, or account for global resource types), use Singleton Identity.
-// * Otherwise, use Parameterized Identity with one or more identity attributes.
-//
-// For more information about resource identity, see
-// https://hashicorp.github.io/terraform-provider-aws/resource-identity/
-//
-// Keep one of the following sets of annotations as appropriate:
-//
-// * ARN Identity
-// @ArnIdentity
-// or
-// @ArnIdentity("arn_attribute")
-//
-// * Singleton Identity
-// @SingletonIdentity
-//
-// * Parameterized Identity
-// @IdentityAttribute("id_attribute")
-// // @IdentityAttribute("another_id_attribute")
-//
+// @IdentityAttribute("directory_id")
 // TIP: ==== GENERATED ACCEPTANCE TESTS ====
 // Resource Identity and tagging make use of automatically generated acceptance tests.
 // For more information about automatically generated acceptance tests, see
@@ -116,11 +90,6 @@ import (
 func newDirectorySettingsResource(_ context.Context) (resource.ResourceWithConfigure, error) {
 	r := &directorySettingsResource{}
 
-	// TIP: ==== CONFIGURABLE TIMEOUTS ====
-	// Users can configure timeout lengths but you need to use the times they
-	// provide. Access the timeout they configure (or the defaults) using,
-	// e.g., r.CreateTimeout(ctx, plan.Timeouts) (see below). The times here are
-	// the defaults if they don't configure timeouts.
 	r.SetDefaultCreateTimeout(30 * time.Minute)
 	r.SetDefaultUpdateTimeout(30 * time.Minute)
 	r.SetDefaultDeleteTimeout(30 * time.Minute)
@@ -138,116 +107,41 @@ type directorySettingsResource struct {
 	framework.WithImportByIdentity
 }
 
-
-// TIP: ==== SCHEMA ====
-// In the schema, add each of the attributes in snake case (e.g.,
-// delete_automated_backups).
-//
-// Formatting rules:
-// * Alphabetize attributes to make them easier to find.
-// * Do not add a blank line between attributes.
-//
-// Attribute basics:
-// * If a user can provide a value ("configure a value") for an
-//   attribute (e.g., instances = 5), we call the attribute an
-//   "argument."
-// * You change the way users interact with attributes using:
-//     - Required
-//     - Optional
-//     - Computed
-// * There are only four valid combinations:
-//
-// 1. Required only - the user must provide a value
-// Required: true,
-//
-// 2. Optional only - the user can configure or omit a value; do not
-//    use Default or DefaultFunc
-// Optional: true,
-//
-// 3. Computed only - the provider can provide a value but the user
-//    cannot, i.e., read-only
-// Computed: true,
-//
-// 4. Optional AND Computed - the provider or user can provide a value;
-//    use this combination if you are using Default
-// Optional: true,
-// Computed: true,
-//
-// You will typically find arguments in the input struct
-// (e.g., CreateDBInstanceInput) for the create operation. Sometimes
-// they are only in the input struct (e.g., ModifyDBInstanceInput) for
-// the modify operation.
-//
-// For more about schema options, visit
-// https://developer.hashicorp.com/terraform/plugin/framework/handling-data/schemas?page=schemas
 func (r *directorySettingsResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
-			names.AttrARN: framework.ARNAttributeComputedOnly(),
-			names.AttrDescription: schema.StringAttribute{
-				Optional: true,
-			},
-			// TIP: ==== "ID" ATTRIBUTE ====
-			// When using the Terraform Plugin Framework, there is no required "id" attribute.
-			// This is different from the Terraform Plugin SDK.
-			//
-			// Only include an "id" attribute if the AWS API has an "Id" field, such as "DirectorySettingsId"
-			names.AttrID: framework.IDAttribute(),
-			names.AttrName: schema.StringAttribute{
-				Required: true,
-				// TIP: ==== PLAN MODIFIERS ====
-				// Plan modifiers were introduced with Plugin-Framework to provide a mechanism
-				// for adjusting planned changes prior to apply. The planmodifier subpackage
-				// provides built-in modifiers for many common use cases such as
-				// requiring replacement on a value change ("ForceNew: true" in Plugin-SDK
-				// resources).
-				//
-				// See more:
-				// https://developer.hashicorp.com/terraform/plugin/framework/resources/plan-modification
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+			"directory_id": schema.StringAttribute{
+				Required:    true,
+				Description: "The identifier of the directory for which to update settings.",
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(regexp.MustCompile(`^d-[0-9a-f]{10}$`), `must start with "d-" followed by exactly 10 lowercase hexadecimal characters (0-9, a-f)`),
 				},
 			},
-			"type": schema.StringAttribute{
-				Required: true,
-			},
-		},
-		Blocks: map[string]schema.Block{
-			"complex_argument": schema.ListNestedBlock{
-				// TIP: ==== CUSTOM TYPES ====
-				// Use a custom type to identify the model type of the tested object
-				CustomType: fwtypes.NewListNestedObjectTypeOf[complexArgumentModel](ctx),
-				// TIP: ==== LIST VALIDATORS ====
-				// List and set validators take the place of MaxItems and MinItems in
-				// Plugin-Framework based resources. Use listvalidator.SizeAtLeast(1) to
-				// make a nested object required. Similar to Plugin-SDK, complex objects
-				// can be represented as lists or sets with listvalidator.SizeAtMost(1).
-				//
-				// For a complete mapping of Plugin-SDK to Plugin-Framework schema fields,
-				// see:
-				// https://developer.hashicorp.com/terraform/plugin/framework/migrating/attributes-blocks/blocks
-				Validators: []validator.List{
-					listvalidator.SizeAtMost(1),
-				},
-				NestedObject: schema.NestedBlockObject{
+			"settings": schema.ListNestedAttribute{
+				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"nested_required": schema.StringAttribute{
-							Required: true,
+						"name": schema.StringAttribute{
+							Required:    true,
+							Description: "The name of the directory setting. For example: TLS_1_0",
+							Validators: []validator.String{
+								stringvalidator.RegexMatches(regexp.MustCompile(`^[a-zA-Z0-9-/. _]*$`), "must contain only letters, numbers, spaces, hyphens, slashes, periods, and underscores"),
+								stringvalidator.LengthAtLeast(1),
+								stringvalidator.LengthAtMost(255)},
 						},
-						"nested_computed": schema.StringAttribute{
-							Computed: true,
-							PlanModifiers: []planmodifier.String{
-								stringplanmodifier.UseStateForUnknown(),
+						"value": schema.StringAttribute{
+							Required:    true,
+							Description: "The value of the directory setting for which to retrieve information. For example, for TLS_1_0, the valid values are: Enable and Disable.",
+							Validators: []validator.String{
+								stringvalidator.RegexMatches(regexp.MustCompile(`^[a-zA-Z0-9_]*$`), "must contain only letters, numbers, and underscores"),
+								stringvalidator.LengthAtLeast(1),
+								stringvalidator.LengthAtMost(255),
 							},
 						},
 					},
 				},
+				Required:    true,
+				Description: "The list of Setting objects.",
 			},
-			names.AttrTimeouts: timeouts.Block(ctx, timeouts.Opts{
-				Create: true,
-				Update: true,
-				Delete: true,
-			}),
 		},
 	}
 }
@@ -269,7 +163,7 @@ func (r *directorySettingsResource) Create(ctx context.Context, req resource.Cre
 
 	// TIP: -- 1. Get a client connection to the relevant service
 	conn := r.Meta().DSClient(ctx)
-	
+
 	// TIP: -- 2. Fetch the plan
 	var plan directorySettingsResourceModel
 	smerr.AddEnrich(ctx, &resp.Diagnostics, req.Plan.Get(ctx, &plan))
@@ -284,7 +178,6 @@ func (r *directorySettingsResource) Create(ctx context.Context, req resource.Cre
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	
 
 	// TIP: -- 4. Call the AWS Create function
 	out, err := conn.CreateDirectorySettings(ctx, &input)
@@ -312,7 +205,7 @@ func (r *directorySettingsResource) Create(ctx context.Context, req resource.Cre
 		smerr.AddError(ctx, &resp.Diagnostics, err, smerr.ID, plan.Name.String())
 		return
 	}
-	
+
 	// TIP: -- 7. Save the request plan to response state
 	smerr.AddEnrich(ctx, &resp.Diagnostics, resp.State.Set(ctx, plan))
 }
@@ -331,14 +224,14 @@ func (r *directorySettingsResource) Read(ctx context.Context, req resource.ReadR
 
 	// TIP: -- 1. Get a client connection to the relevant service
 	conn := r.Meta().DSClient(ctx)
-	
+
 	// TIP: -- 2. Fetch the state
 	var state directorySettingsResourceModel
 	smerr.AddEnrich(ctx, &resp.Diagnostics, req.State.Get(ctx, &state))
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	
+
 	// TIP: -- 3. Get the resource from AWS using an API Get, List, or Describe-
 	// type function, or, better yet, using a finder.
 	out, err := findDirectorySettingsByID(ctx, conn, state.ID.ValueString())
@@ -352,13 +245,13 @@ func (r *directorySettingsResource) Read(ctx context.Context, req resource.ReadR
 		smerr.AddError(ctx, &resp.Diagnostics, err, smerr.ID, state.ID.String())
 		return
 	}
-	
+
 	// TIP: -- 5. Set the arguments and attributes
 	smerr.AddEnrich(ctx, &resp.Diagnostics, r.flatten(ctx, out, &state))
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	
+
 	// TIP: -- 6. Set the state
 	smerr.AddEnrich(ctx, &resp.Diagnostics, resp.State.Set(ctx, &state))
 }
@@ -391,7 +284,7 @@ func (r *directorySettingsResource) Update(ctx context.Context, req resource.Upd
 	// 6. Save the request plan to response state
 	// TIP: -- 1. Get a client connection to the relevant service
 	conn := r.Meta().DSClient(ctx)
-	
+
 	// TIP: -- 2. Fetch the plan
 	var plan, state directorySettingsResourceModel
 	smerr.AddEnrich(ctx, &resp.Diagnostics, req.Plan.Get(ctx, &plan))
@@ -399,7 +292,7 @@ func (r *directorySettingsResource) Update(ctx context.Context, req resource.Upd
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	
+
 	// TIP: -- 3. Get the difference between the plan and state, if any
 	diff, d := flex.Diff(ctx, plan, state)
 	smerr.AddEnrich(ctx, &resp.Diagnostics, d)
@@ -413,7 +306,7 @@ func (r *directorySettingsResource) Update(ctx context.Context, req resource.Upd
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		
+
 		// TIP: -- 4. Call the AWS modify/update function
 		out, err := conn.UpdateDirectorySettings(ctx, &input)
 		if err != nil {
@@ -424,7 +317,7 @@ func (r *directorySettingsResource) Update(ctx context.Context, req resource.Upd
 			smerr.AddError(ctx, &resp.Diagnostics, errors.New("empty output"), smerr.ID, plan.ID.String())
 			return
 		}
-		
+
 		// TIP: Using the output from the update function, re-set any computed attributes
 		smerr.AddEnrich(ctx, &resp.Diagnostics, flex.Flatten(ctx, out, &plan))
 		if resp.Diagnostics.HasError() {
@@ -462,19 +355,19 @@ func (r *directorySettingsResource) Delete(ctx context.Context, req resource.Del
 	// 5. Use a waiter to wait for delete to complete
 	// TIP: -- 1. Get a client connection to the relevant service
 	conn := r.Meta().DSClient(ctx)
-	
+
 	// TIP: -- 2. Fetch the state
 	var state directorySettingsResourceModel
 	smerr.AddEnrich(ctx, &resp.Diagnostics, req.State.Get(ctx, &state))
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	
+
 	// TIP: -- 3. Populate a delete input structure
 	input := ds.DeleteDirectorySettingsInput{
 		DirectorySettingsId: state.ID.ValueStringPointer(),
 	}
-	
+
 	// TIP: -- 4. Call the AWS delete function
 	_, err := conn.DeleteDirectorySettings(ctx, &input)
 	// TIP: On rare occassions, the API returns a not found error after deleting a
@@ -487,7 +380,7 @@ func (r *directorySettingsResource) Delete(ctx context.Context, req resource.Del
 		smerr.AddError(ctx, &resp.Diagnostics, err, smerr.ID, state.ID.String())
 		return
 	}
-	
+
 	// TIP: -- 5. Use a waiter to wait for delete to complete
 	deleteTimeout := r.DeleteTimeout(ctx, state.Timeouts)
 	_, err = waitDirectorySettingsDeleted(ctx, conn, state.ID.ValueString(), deleteTimeout)
@@ -507,10 +400,9 @@ func (r *directorySettingsResource) Delete(ctx context.Context, req resource.Del
 // https://hashicorp.github.io/terraform-provider-aws/add-resource-identity-support/
 // func (r *directorySettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 // 	r.WithImportByIdentity.ImportState(ctx, req, resp)
-// 
+//
 // 	// Set needed attribute values here
 // }
-
 
 // TIP: ==== STATUS CONSTANTS ====
 // Create constants for states and statuses if the service does not
@@ -630,7 +522,7 @@ func findDirectorySettingsByID(ctx context.Context, conn *ds.Client, id string) 
 	if err != nil {
 		if errs.IsA[*awstypes.ResourceNotFoundException](err) {
 			return nil, smarterr.NewError(&retry.NotFoundError{
-				LastError:   err,
+				LastError: err,
 			})
 		}
 
@@ -672,7 +564,6 @@ type complexArgumentModel struct {
 	NestedOptional types.String `tfsdk:"nested_optional"`
 }
 
-
 // TIP: ==== IMPORT ID HANDLER ====
 // When a resource type has a Resource Identity with multiple attributes, it needs a handler to
 // parse the Import ID used for the `terraform import` command or an `import` block with the `id` parameter.
@@ -703,7 +594,6 @@ func (directorySettingsImportID) Parse(id string) (string, map[string]string, er
 	return id, result, nil
 }
 
-
 // TIP: ==== SWEEPERS ====
 // When acceptance testing resources, interrupted or failed tests may
 // leave behind orphaned resources in an account. To facilitate cleaning
@@ -717,7 +607,7 @@ func (directorySettingsImportID) Parse(id string) (string, map[string]string, er
 // Once the sweeper function is implemented, register it in sweep.go
 // as follows:
 //
-//  awsv2.Register("aws_ds_directory_settings", sweepDirectorySettingss)
+//	awsv2.Register("aws_ds_directory_settings", sweepDirectorySettingss)
 //
 // See more:
 // https://hashicorp.github.io/terraform-provider-aws/running-and-writing-acceptance-tests/#acceptance-test-sweepers
