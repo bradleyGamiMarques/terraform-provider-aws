@@ -146,66 +146,37 @@ func (r *directorySettingsResource) Schema(ctx context.Context, req resource.Sch
 }
 
 func (r *directorySettingsResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	// TIP: ==== RESOURCE CREATE ====
-	// Generally, the Create function should do the following things. Make
-	// sure there is a good reason if you don't do one of these.
-	//
-	// 1. Get a client connection to the relevant service
-	// 2. Fetch the plan
-	// 3. Populate a create input structure
-	// 4. Call the AWS create/put function
-	// 5. Using the output from the create function, set the minimum arguments
-	//    and attributes for the Read function to work, as well as any computed
-	//    only attributes.
-	// 6. Use a waiter to wait for create to complete
-	// 7. Save the request plan to response state
 
-	// TIP: -- 1. Get a client connection to the relevant service
 	conn := r.Meta().DSClient(ctx)
 
-	// TIP: -- 2. Fetch the plan
 	var plan directorySettingsResourceModel
 	smerr.AddEnrich(ctx, &resp.Diagnostics, req.Plan.Get(ctx, &plan))
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// TIP: -- 3. Populate a Create input structure
-	var input directoryservice.CreateDirectorySettingsInput
-	// TIP: Using a field name prefix allows mapping fields such as `ID` to `DirectorySettingsId`
-	smerr.AddEnrich(ctx, &resp.Diagnostics, flex.Expand(ctx, plan, &input, flex.WithFieldNamePrefix("DirectorySettings")))
+	var input directoryservice.UpdateSettingsInput
+	smerr.AddEnrich(ctx, &resp.Diagnostics, flex.Expand(ctx, plan, &input))
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// TIP: -- 4. Call the AWS Create function
-	out, err := conn.CreateDirectorySettings(ctx, &input)
+	out, err := conn.UpdateSettings(ctx, &input)
 	if err != nil {
-		// TIP: Since ID has not been set yet, you cannot use plan.ID.String()
-		// in error messages at this point.
-		smerr.AddError(ctx, &resp.Diagnostics, err, smerr.ID, plan.Name.String())
-		return
-	}
-	if out == nil || out.DirectorySettings == nil {
-		smerr.AddError(ctx, &resp.Diagnostics, errors.New("empty output"), smerr.ID, plan.Name.String())
+		smerr.AddError(ctx, &resp.Diagnostics, err, smerr.ID, plan.DirectoryID.String())
 		return
 	}
 
-	// TIP: -- 5. Using the output from the create function, set attributes
-	smerr.AddEnrich(ctx, &resp.Diagnostics, flex.Flatten(ctx, out, &plan))
-	if resp.Diagnostics.HasError() {
+	if out == nil || out.DirectoryId == nil || aws.ToString(out.DirectoryId) == "" {
+		smerr.AddError(ctx, &resp.Diagnostics, errors.New("empty output"), smerr.ID, plan.DirectoryID.ValueString())
 		return
 	}
 
-	// TIP: -- 6. Use a waiter to wait for create to complete
-	createTimeout := r.CreateTimeout(ctx, plan.Timeouts)
-	_, err = waitDirectorySettingsCreated(ctx, conn, plan.ID.ValueString(), createTimeout)
-	if err != nil {
-		smerr.AddError(ctx, &resp.Diagnostics, err, smerr.ID, plan.Name.String())
-		return
-	}
+	// UpdateSettingsOutput does not return full resource state.
+	// The planned values already contain the minimum attributes needed for read.
 
-	// TIP: -- 7. Save the request plan to response state
+	// No create waiter needed.
+	// UpdateSettings does not expose a separate asynchronus creation state
 	smerr.AddEnrich(ctx, &resp.Diagnostics, resp.State.Set(ctx, plan))
 }
 
@@ -537,11 +508,11 @@ func findDirectorySettingsByID(ctx context.Context, conn *ds.Client, id string) 
 
 type directorySettingsResourceModel struct {
 	framework.WithRegionModel
-	DirectoryID types.String                                            `tfsdk:"directory_id"`
-	Settings    fwtypes.ListNestedObjectValueOf[directorySettingsModel] `tfsdk:"settings"`
+	DirectoryID types.String                                           `tfsdk:"directory_id"`
+	Settings    fwtypes.ListNestedObjectValueOf[directorySettingModel] `tfsdk:"settings"`
 }
 
-type directorySettingsModel struct {
+type directorySettingModel struct {
 	Name  types.String `tfsdk:"name"`
 	Value types.String `tfsdk:"value"`
 }
